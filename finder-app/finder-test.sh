@@ -8,7 +8,7 @@ set -u
 NUMFILES=10
 WRITESTR=AELD_IS_FUN
 WRITEDIR=/tmp/aeld-data
-username=$(cat conf/username.txt)
+username=$(cat ../conf/username.txt)
 
 if [ $# -lt 3 ]
 then
@@ -48,13 +48,16 @@ then
 		exit 1
 	fi
 fi
-#echo "Removing the old writer utility and compiling as a native application"
-#make clean
-#make
+
+#This line should be uncommented later when using  aarch64 target
+#export CROSS_COMPILE=aarch64-none-linux-gnu-
+echo "Removing the old writer utility and compiling as a native application"
+make clean
+make
 
 for i in $( seq 1 $NUMFILES)
 do
-	./writer.sh "$WRITEDIR/${username}$i.txt" "$WRITESTR"
+	./writer -f "$WRITEDIR/${username}$i.txt" -s "$WRITESTR"
 done
 
 OUTPUTSTRING=$(./finder.sh "$WRITEDIR" "$WRITESTR")
