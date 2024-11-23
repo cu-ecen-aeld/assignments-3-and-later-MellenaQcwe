@@ -1,4 +1,9 @@
 #include "systemcalls.h"
+#include <unistd.h>
+#include <sys/wait.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <fcntl.h>
 
 /**
  * @param cmd the command to execute with system()
@@ -9,14 +14,8 @@
 */
 bool do_system(const char *cmd)
 {
-
-/*
- * TODO  add your code here
- *  Call the system() function with the command set in the cmd
- *   and return a boolean true if the system() call completed with success
- *   or false() if it returned a failure
-*/
-
+    int rc;
+    if ((rc = system(cmd) != 0)) { perror(cmd); return false; }
     return true;
 }
 
@@ -35,7 +34,7 @@ bool do_system(const char *cmd)
 */
 
 bool do_exec(int count, ...)
-{
+{ 
     va_list args;
     va_start(args, count);
     char * command[count+1];
@@ -45,23 +44,32 @@ bool do_exec(int count, ...)
         command[i] = va_arg(args, char *);
     }
     command[count] = NULL;
-    // this line is to avoid a compile warning before your implementation is complete
-    // and may be removed
-    command[count] = command[count];
 
-/*
- * TODO:
- *   Execute a system command by calling fork, execv(),
- *   and wait instead of system (see LSP page 161).
- *   Use the command[0] as the full path to the command to execute
- *   (first argument to execv), and use the remaining arguments
- *   as second argument to the execv() command.
- *
-*/
+    bool success = true;
+    int pid;
+    fflush(stdout);
+    pid = fork();
+    if (pid == 0/*Child*/) {
+        execv (command[0], command); /*Replace Child process with shell command process*/
+        //perror("execv() failed"); success = false; /*If this code is reached then execv() failed with rc=-1*/
+        // Above code commented out beacuse it leads child to exit with status=0(success), which leads to unexpected behavior
+    } else if (pid > 0/*Parent*/) {
+        int status;
+        if (waitpid(pid, &status, 0) == -1/*Wait for child to terminate*/) { perror("wait() failed"); success = false; }
+        else { 
+            if (WIFEXITED(status)) { 
+                int rc = WEXITSTATUS(status);
+                printf("Child exited, rc=%d\n", rc); 
+                success = (rc == 0) ? true : false;
+            } else if (WIFSIGNALED(status)) { printf("Child killed by signal %d\n", WTERMSIG(status)); 
+            } else if (WIFSTOPPED(status)) { printf("Child stopped by signal %d\n", WSTOPSIG(status)); 
+            } else if (WIFCONTINUED(status)) { printf("Child continued\n"); }
+         }
+    } else { perror ("fork() failed"); success = false; }
 
     va_end(args);
 
-    return true;
+    return success;
 }
 
 /**
@@ -80,20 +88,37 @@ bool do_exec_redirect(const char *outputfile, int count, ...)
         command[i] = va_arg(args, char *);
     }
     command[count] = NULL;
-    // this line is to avoid a compile warning before your implementation is complete
-    // and may be removed
-    command[count] = command[count];
 
+    int fd = open (outputfile, O_WRONLY | O_CREAT, 644);
+    if (fd < 0) { perror ("open() failed"); return false; }
 
-/*
- * TODO
- *   Call execv, but first using https://stackoverflow.com/a/13784315/1446624 as a refernce,
- *   redirect standard out to a file specified by outputfile.
- *   The rest of the behaviour is same as do_exec()
- *
-*/
+    bool success = true;
+    int pid;
+    fflush(stdout);
+    pid = fork();
+    if (pid == 0/*Child*/) {
+        if (dup2(fd, 1/*stdout*/) < 0) { perror("dups() failed"); success = false; }
+        else {
+            execv (command[0], command); /*Replace Child process with shell command process*/
+            //perror("execv() failed"); success = false; /*If this code is reached then execv() failed with rc=-1*/
+            // Above code commented out beacuse it leads child to exit with status=0(success), which leads to unexpected behavior
+        }
+    } else if (pid > 0/*Parent*/) {
+        int status;
+        if (wait(&status) == -1/*Wait for child to terminate*/) { perror("wait() failed"); success = false; }
+        else { 
+            if (WIFEXITED(status)) { 
+                int rc = WEXITSTATUS(status);
+                printf("Child exited, rc=%d\n", rc); 
+                success = rc == 0 ? true : false;
+            } else if (WIFSIGNALED(status)) { printf("Child killed by signal %d\n", WTERMSIG(status)); 
+            } else if (WIFSTOPPED(status)) { printf("Child stopped by signal %d\n", WSTOPSIG(status)); 
+            } else if (WIFCONTINUED(status)) { printf("Child continued\n"); }
+         }
+    } else { perror ("fork() failed"); success = false; }
 
+    close(fd);
     va_end(args);
 
-    return true;
+    return success;
 }
