@@ -4,6 +4,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <fcntl.h>
+#include <string.h>
+#include <errno.h>
 
 /**
  * @param cmd the command to execute with system()
@@ -50,9 +52,11 @@ bool do_exec(int count, ...)
     fflush(stdout);
     pid = fork();
     if (pid == 0/*Child*/) {
-        execv (command[0], command); /*Replace Child process with shell command process*/
-        //perror("execv() failed"); success = false; /*If this code is reached then execv() failed with rc=-1*/
-        // Above code commented out beacuse it leads child to exit with status=0(success), which leads to unexpected behavior
+        int rc;
+        rc = execv (command[0], command); /*Replace Child process with shell command process*/
+        /*This code below is reached means that execv() failed with rc=-1*/
+        fprintf(stderr, "***ERROR: execv() failed with return value %d: %s\n", rc, strerror(errno));
+        exit(EXIT_FAILURE); 
     } else if (pid > 0/*Parent*/) {
         int status;
         if (waitpid(pid, &status, 0) == -1/*Wait for child to terminate*/) { perror("wait() failed"); success = false; }
@@ -99,9 +103,10 @@ bool do_exec_redirect(const char *outputfile, int count, ...)
     if (pid == 0/*Child*/) {
         if (dup2(fd, 1/*stdout*/) < 0) { perror("dups() failed"); success = false; }
         else {
-            execv (command[0], command); /*Replace Child process with shell command process*/
-            //perror("execv() failed"); success = false; /*If this code is reached then execv() failed with rc=-1*/
-            // Above code commented out beacuse it leads child to exit with status=0(success), which leads to unexpected behavior
+            int rc;
+            rc = execv (command[0], command); /*Replace Child process with shell command process*/
+            /*This code below is reached means that execv() failed with rc=-1*/
+            fprintf(stderr, "***ERROR: execv() failed with return value %d: %s\n", rc, strerror(errno));
         }
     } else if (pid > 0/*Parent*/) {
         int status;
