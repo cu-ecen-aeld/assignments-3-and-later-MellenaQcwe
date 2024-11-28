@@ -20,6 +20,21 @@ struct thread_data{
      * if an error occurred.
      */
     bool thread_complete_success;
+
+    /**
+     * Use to lock and release the resource data
+     */
+    pthread_mutex_t *mutex;
+
+    /**
+     * The amount of time to sleep before locking the mutex
+     */
+    int wait_to_obtain_ms;
+
+    /**
+     * The amount of time to sleep after locking the mutex
+     */
+    int wait_to_release_ms;
 };
 
 
