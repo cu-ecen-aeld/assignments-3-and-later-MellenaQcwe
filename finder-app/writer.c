@@ -77,7 +77,7 @@ static void print_usage (const char* command_name) {
 
 static int write_to_file (const char* file_path, const char* str) {
     /*Assuming the directory is created by the caller*/
-    int fptr = open (file_path, O_WRONLY | O_CREAT);
+    int fptr = open (file_path, O_WRONLY | O_CREAT, 0600);
     if (fptr == -1) {
         printf ("%s does not exist. Please create the file before running this program.", file_path);
         syslog (LOG_ERR, "%s does not exist. Please create the file before running this program.", file_path);

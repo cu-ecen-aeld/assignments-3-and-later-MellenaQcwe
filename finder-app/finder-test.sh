@@ -49,8 +49,8 @@ then
 	fi
 fi
 
-##This line should be uncommented later when using  aarch64 target
-##export CROSS_COMPILE=aarch64-none-linux-gnu-
+# Switch Between native and cross compilation
+# export CROSS_COMPILE=aarch64-none-linux-gnu-
 # echo "Removing the old writer utility and compiling as a native application"
 # make clean
 # make
