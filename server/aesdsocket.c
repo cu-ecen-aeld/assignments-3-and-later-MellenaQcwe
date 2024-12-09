@@ -18,11 +18,11 @@
 #define MAX_PACKAGE_LEN 1024*100  // 100 Kbytes
 #define PORT "9000"
 
-static struct addrinfo *result;
-static int sockfd; fd_set active_fds;
+static struct addrinfo *result = NULL;
+static int sockfd = -1; fd_set active_fds = {};
 static char persistent_file[] = "/var/tmp/aesdsocketdata";
-static int daemon_flag;
-static int help_flag;
+static int daemon_flag = 0;
+static int help_flag = 0;
 
 
 void signal_handle(int signal_number) {
@@ -60,7 +60,7 @@ int main(int argc, char *argv[]) {
     syslog(LOG_NOTICE, "Server started by User %d", getuid ());
 
     // Get suiltable sockaddr for bind() and accept using getaddrinfo()
-    struct addrinfo hints;
+    struct addrinfo hints = {};
     memset(&hints, 0, sizeof (hints));
     hints.ai_family = AF_INET;
     hints.ai_protocol = IPPROTO_TCP;
@@ -105,14 +105,14 @@ int main(int argc, char *argv[]) {
         printf("Server listening.\n"); 
     }
   
-    struct sockaddr_in clients[FD_SETSIZE]; 
-    struct sockaddr_in client; 
+    struct sockaddr_in clients[FD_SETSIZE] = {}; 
+    struct sockaddr_in client = {}; 
     FD_ZERO(&active_fds);
     FD_SET(sockfd, &active_fds);
-    fd_set read_fds;
-    socklen_t len; 
+    fd_set read_fds = {};
+    socklen_t len = -1; 
     len = sizeof(client); 
-    int connfd;
+    int connfd = -1;
     for (;;) {
         // Block until input arrive on one or more active sockets
         read_fds = active_fds;
@@ -164,7 +164,7 @@ static void parse_cmdline_args(int argc, char *argv[]) {
         {0, 0, 0, 0}
     };
 
-    int option;
+    int option = -1;
     int option_index = 0;
     while ((option = getopt_long (argc, argv, "hd", long_options, &option_index)) != -1){
         switch (option)
@@ -202,8 +202,8 @@ static int write_to_file(const char* user_file, const char* str) {
      * @return Return the number of bytes written, or -1 if an error occure
      */
 
-    int fptr;
-    int sz;
+    int fptr = -1;
+    int sz = -1;
     
     // Append to already created file
     fptr = open(user_file, O_WRONLY | O_APPEND | O_CREAT, 0600);
@@ -239,9 +239,9 @@ static ssize_t read_from_file(const char* user_file, char* read_buff) {
      * @return  Return the number of bytes read, or -1 if an error occure
      */
 
-    FILE *fptr;
-    size_t sz;
-    long int file_sz;
+    FILE *fptr = NULL;
+    size_t sz = -1;
+    long int file_sz = -1;
     
     // Open read only
     fptr = fopen(user_file, "r");
@@ -251,7 +251,7 @@ static ssize_t read_from_file(const char* user_file, char* read_buff) {
     }
 
     // Check file permission
-    struct stat st;
+    struct stat st = {};
     stat(user_file, &st);
     printf("File permissions:  %04o.\n", st.st_mode & 0777);
 
@@ -282,7 +282,7 @@ static void msg_exchange(int connfd, char* clientip) {
      * @return Void
      */
     
-    char buff[MAX_PACKAGE_LEN+1]; // One byte padding for '\0' termination
+    char buff[MAX_PACKAGE_LEN+1] = {}; // One byte padding for '\0' termination
     ssize_t buff_len = 0;
     char buff_offset = 0;
     bzero(buff, MAX_PACKAGE_LEN+1); 
