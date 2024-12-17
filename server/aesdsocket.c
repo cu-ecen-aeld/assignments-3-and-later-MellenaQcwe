@@ -1,51 +1,43 @@
-#include <stdio.h>
-#include <netinet/in.h>
-#include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
-#include <syslog.h>
-#include <fcntl.h>
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <netdb.h>
-#include <arpa/inet.h>
-#include <signal.h>
-#include <errno.h>
-#include <sys/select.h>
-#include <getopt.h>
-#include <sys/stat.h>
+#include <aesdsocket.h>
 
-#define MAX_PACKAGE_LEN 1024*100  // 100 Kbytes
-#define PORT "9000"
-
-static struct addrinfo *result = NULL;
-static int sockfd = -1; fd_set active_fds = {};
-static char persistent_file[] = "/var/tmp/aesdsocketdata";
-static int daemon_flag = 0;
-static int help_flag = 0;
-
+slist_data_t *thd = NULL;
+SLIST_HEAD(slisthead, slist_data_s) head;
 
 void signal_handle(int signal_number) {
     if (signal_number == SIGINT || signal_number == SIGTERM) {
-        printf("Caught signal, exiting.\n"); 
         syslog(LOG_NOTICE, "Caught signal, exiting.");
-        shutdown(sockfd, SHUT_RDWR);
-        close(sockfd); 
-        FD_CLR(sockfd, &active_fds);
+
         remove(persistent_file);
-        exit(0);
+
+        shutdown(sockfd, SHUT_RDWR);
+        close(sockfd);
+
+        pthread_mutex_lock(&mutex);
+        thd_exit_requested = 1;
+        pthread_mutex_unlock(&mutex);
+
+        while (!SLIST_EMPTY(&head)) {
+            thd = SLIST_FIRST(&head);
+            //printf("SIGNAL EXIT: Thread id  %lu\n", thd->data.id);
+            if (thd != NULL) {
+                pthread_join(thd->data.id, (void **)&thd->data.retval);
+                if (thd->data.retval != NULL) {
+                    //printf("SIGNAL EXIT: Thread retval %d\n", *(thd->data.retval));
+                    free(thd->data.retval);
+                }
+                SLIST_REMOVE_HEAD(&head, entries);
+                free(thd);
+            }
+        }
     }
+
+    exit(0);
 }
 
 void cleanup() {
     freeaddrinfo(result);
 }
 
-static void msg_exchange(int, char *);
-static int write_to_file(const char*, const char*);
-static ssize_t read_from_file(const char*, char*);
-static void print_usage (const char*);
-static void parse_cmdline_args(int, char *[]);
 
 int main(int argc, char *argv[]) { 
     parse_cmdline_args(argc, argv);
@@ -79,6 +71,31 @@ int main(int argc, char *argv[]) {
     } else {
         printf("Socket successfully created.\n"); 
     }
+
+    // Reuse socket port if not close
+    int opt_enable = 1;
+    if ((setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &opt_enable, sizeof (opt_enable))) != 0) { 
+        printf("Failed to set socket option SO_REUSEADDR.\n"); 
+        exit(-1); 
+    }
+
+    // Disable Nagle's algorithm's delay
+    if ((setsockopt(sockfd, IPPROTO_TCP, TCP_NODELAY, &opt_enable, sizeof (opt_enable))) != 0) { 
+        printf("Failed to set socket option TCP_NODELAY.\n"); 
+        exit(-1); 
+    }
+
+    // Increase sock buffer size to prevent recv routine to block waiting for more incoming data
+    char desirable_buff_size_str[50] = {};
+    int desirable_buff_size = MAX_PACKAGE_LEN*50; // cat /proc/sys/net/core/rmem_max retunrs 212992 and 4096*50 is 204800
+    if ((read_from_file("/proc/sys/net/core/rmem_max", desirable_buff_size_str)) > 0) {
+        desirable_buff_size = atoi(desirable_buff_size_str);
+    }
+    printf("Socket desirable data size is %d.\n", desirable_buff_size); 
+    if ((setsockopt(sockfd, SOL_SOCKET, SO_RCVBUF, &desirable_buff_size, sizeof (desirable_buff_size))) != 0) { 
+        printf("Failed to set socket option SO_RCVBUF.\n"); 
+        exit(-1); 
+    }
   
     // Binding newly created socket to given IP and verification
     if ((bind(sockfd, (struct sockaddr *)result->ai_addr, result->ai_addrlen)) != 0) { 
@@ -104,49 +121,63 @@ int main(int argc, char *argv[]) {
     } else {
         printf("Server listening.\n"); 
     }
-  
-    struct sockaddr_in clients[FD_SETSIZE] = {}; 
+    
+    // Init threads list
+    SLIST_INIT(&head);
+
+    // Start timestamp thread
+    thd = malloc(sizeof(slist_data_t));
+    thd->data.connfd = -1; // No socket
+    thd->data.ip = NULL;
+    thd->data.completed = false;
+    pthread_create(&(thd->data.id), NULL, log_current_time, (void *)&thd->data);
+    SLIST_INSERT_HEAD(&head, thd, entries);
+    printf("Created thread %lu for time logging.\n", thd->data.id); 
+
+
+    // Accept socket connections forever
     struct sockaddr_in client = {}; 
-    FD_ZERO(&active_fds);
-    FD_SET(sockfd, &active_fds);
-    fd_set read_fds = {};
     socklen_t len = -1; 
-    len = sizeof(client); 
     int connfd = -1;
+    len = sizeof(client); 
     for (;;) {
-        // Block until input arrive on one or more active sockets
-        read_fds = active_fds;
-        //printf("Waiting for new active socket.\n"); 
-        if ((select(FD_SETSIZE, &read_fds, NULL, NULL, NULL)) < 0) {
-            printf("No active socket. Continue.\n"); 
-            continue;
-        }
-        for (int fd = 0; fd < FD_SETSIZE; ++fd) {
-            if (FD_ISSET(fd, &read_fds)) {
-                //printf("Found active socket fd %d.\n", fd); 
-                if (fd == sockfd) {
-                    // Connection request on server socket (Interrupt caught for sockfd)
-                    connfd = accept(sockfd, (struct sockaddr *)&client, &len); 
-                    if (connfd < 0) { 
-                        printf("Failed to accept a connection.\n"); 
-                    } else {
-                        printf("Accepted connection from %s (fd=%d).\n", inet_ntoa(client.sin_addr), connfd); 
-                        syslog(LOG_NOTICE, "Accepted connection from %s (fd=%d).\n", inet_ntoa(client.sin_addr), connfd); 
-                        FD_SET(connfd, &active_fds);
-                        clients[fd] = client;
+        printf("Wait for connection.\n");
+        connfd = accept(sockfd, (struct sockaddr *)&client, &len); 
+        if (connfd < 0) { 
+            printf("Failed to accept a connection.\n"); 
+        } else {
+            printf("Accepted connection from %s (fd=%d).\n", inet_ntoa(client.sin_addr), connfd); 
+            syslog(LOG_NOTICE, "Accepted connection from %s (fd=%d).\n", inet_ntoa(client.sin_addr), connfd); 
+
+            thd = malloc(sizeof(slist_data_t));
+            thd->data.connfd = connfd;
+            thd->data.ip = inet_ntoa(client.sin_addr);
+            thd->data.completed = false;
+            pthread_create(&(thd->data.id), NULL, msg_exchange, (void *)&thd->data);
+            SLIST_INSERT_HEAD(&head, thd, entries);
+            printf("Created thread %lu for socket connfd %d.\n", thd->data.id, connfd); 
+            
+            SLIST_FOREACH(thd, &head, entries) {
+                if (thd != NULL) {
+                    //printf("Thread %lu completed flag is %d\n", thd->data.id, thd->data.completed);
+                    if (thd->data.completed) {
+                        pthread_join(thd->data.id, (void **)&thd->data.retval);
+                        if (thd->data.retval != NULL) {
+                            printf("Thread %lu complete with retval %d\n", thd->data.id, *(thd->data.retval));
+                            free(thd->data.retval);
+                        }
+                        SLIST_REMOVE(&head, thd, slist_data_s, entries);
+                        free(thd);
                     }
-                } else {
-                    // Data arrived on already connected socket (Interrupt caught for fd)
-                    msg_exchange(fd, inet_ntoa(clients[fd].sin_addr)); 
                 }
             }
         }
     }
-    
+
     return 0;
 }
 
-static void print_usage (const char* command_name) {
+static void print_usage(const char* command_name) {
     printf ("Usage: %s <option>\n", command_name);
     printf ( "Options:\n");
     printf ( "-d : Run in background.\n");
@@ -215,7 +246,7 @@ static int write_to_file(const char* user_file, const char* str) {
 
     // Write the buffer to the file
     sz = write(fptr, str, strlen(str));
-    printf("Wrote '%d' bytes to file '%s'.\n", sz, user_file);
+    //printf("Wrote '%d' bytes to file '%s'.\n", sz, user_file);
     if (sz == -1) {
         printf("Failed to write to file.\n");
         return -1;
@@ -250,20 +281,19 @@ static ssize_t read_from_file(const char* user_file, char* read_buff) {
         return -1;
     }
 
-    // Check file permission
-    struct stat st = {};
-    stat(user_file, &st);
-    printf("File permissions:  %04o.\n", st.st_mode & 0777);
-
     // Read file content
     fseek(fptr, 0, SEEK_END); // Move file position to the end of the file
     file_sz = ftell(fptr); // Get the current file position
     fseek(fptr, 0, SEEK_SET); // Reset file position to start of file
     sz = fread(read_buff, 1, file_sz, fptr);
+    if (sz <= 0) {
+        printf("Failed read from file %s.\n", user_file);
+        return -1;
+    }
     if ((long int)sz != file_sz) {
         printf("Warning: read %ld bytes != %ld file size.\n", sz, file_sz);
     }
-    printf("Read '%ld' bytes from file '%s'.\n", sz, user_file);
+    //printf("Read '%ld' bytes from file '%s'.\n", sz, user_file);
 
     // Close the file
     if (fclose(fptr) < 0) {
@@ -274,71 +304,144 @@ static ssize_t read_from_file(const char* user_file, char* read_buff) {
     return sz;
 }
 
-static void msg_exchange(int connfd, char* clientip) { 
+static void* msg_exchange(void *_args) { 
     /**
      * Function designed for msg exchange between client and server. 
-     * @param connfd The socket connection to client with client_ip
-     * @param clientip The ip of the socket client
+     * @param arg1 The socket connection to client with client_ip
+     * @param arg2 The ip of the socket client
      * @return Void
      */
     
-    char buff[MAX_PACKAGE_LEN+1] = {}; // One byte padding for '\0' termination
-    ssize_t buff_len = 0;
-    char buff_offset = 0;
-    bzero(buff, MAX_PACKAGE_LEN+1); 
-    char *read_buff = (char*)malloc(MAX_PACKAGE_LEN);
-    ssize_t read_buff_total = 0;
-    ssize_t send_buff_len = 0;
-    ssize_t send_buff_total = 0;
+    struct thread_data *args = (struct thread_data *)_args;
+    int connfd = args->connfd;
+    char* clientip = args->ip;
+    int *retval = (int *)malloc(sizeof (int));
+    *retval = 0;
 
-    // Read the message from client non blocking and copy it in buffer 
-    buff_len = recv(connfd, (buff + buff_offset), sizeof(buff), MSG_DONTWAIT); 
-    if (buff_len == -1 && errno == EAGAIN) {
-        printf("Waiting for incoming data from client fd %d.\n", connfd); 
-    } else if (buff_len == 0) {
-        FD_CLR(connfd, &active_fds);
-        printf("Closed connection from %s (fd=%d).\n", clientip, connfd); 
-        syslog(LOG_NOTICE, "Closed connection from %s (fd=%d).\n", clientip, connfd); 
-    } else if (buff_len > MAX_PACKAGE_LEN) {
-        printf("Packet from client fd %d exeeds length of %d bytes: Discarded.\n", connfd, (int)MAX_PACKAGE_LEN); 
-    } else {
-        if (buff_len > 0) {
-            // Check string termination ('\0')
-            if (strlen(buff) != (size_t)(buff_len-1)) {
-                buff[buff_len] = '\0'; // padding string termination
-            }
+    char *buff = (char*)malloc(MAX_PACKAGE_LEN); // Allocate buffer for new thread
+    ssize_t read_buff_total_len = 0;
+    ssize_t send_buff_current_len = 0;
+    ssize_t send_buff_total_len = 0;
 
-            // Check package termination (newline)
-            if (buff[strlen(buff)-1] == '\n') {
-                printf("Received package from client fd %d: %s", connfd, buff); 
+    while (!thd_exit_requested) {
+        // Read the message from client non blocking and copy it in buffer 
+        memset(buff, '\0', MAX_PACKAGE_LEN);
+        read_buff_total_len = recv(connfd, buff, MAX_PACKAGE_LEN, MSG_DONTWAIT /*none blocking io*/); 
+        if (read_buff_total_len == -1 && errno == EAGAIN) {
+            //printf("Waiting for incoming data from client fd %d.\n", connfd); 
+            continue;
+        } else if (read_buff_total_len == 0) {
+            printf("Closed connection from %s (fd=%d).\n", clientip, connfd); 
+            syslog(LOG_NOTICE, "Closed connection from %s (fd=%d).\n", clientip, connfd); 
+            break; // goto thread_exit
+        } else if (read_buff_total_len > MAX_PACKAGE_LEN) {
+            printf("Failed with packet length exeeding %d bytes: Discarded ((client fd %d)).\n", (int)MAX_PACKAGE_LEN, connfd); 
+            *retval = 1;
+            break; // goto thread_exit
+        } else {
+            if (read_buff_total_len > 0) {
+                // Check package termination (newline)
+                if (buff[read_buff_total_len-1] == '\n') {
+                    printf("Received package from client fd %d: %s", connfd, buff); 
 
-                // Write package to persistance file
-                if (write_to_file(persistent_file, buff) == -1) {
-                    printf("Failed to log message to persistant file.\n");
-                } else {
-                    // Send all packages to the client
-                    read_buff_total = read_from_file(persistent_file, read_buff);
-
-                    if (read_buff_total != -1) {
-                        while(send_buff_total < read_buff_total) { 
-                            printf("Sending all packages to client fd %d.\n", connfd);
-                            //printf("Packages:\n%s", read_buff);  
-                            send_buff_len = send(connfd,read_buff, read_buff_total, MSG_DONTWAIT);
-                            if (buff_len == -1 && errno == EAGAIN) {
-                                continue;
-                            }
-                            send_buff_total += send_buff_len; 
-                        }
-                        printf("%ld bytes sent.\n", send_buff_total); 
+                    // Write package to persistance file
+                    pthread_mutex_lock(&mutex);
+                    if (write_to_file(persistent_file, buff) == -1) {
+                        printf("Failed to log message to persistant file.\n");
+                        *retval = 1;
+                        break; // goto thread_exit
                     } else {
-                        printf("Failed to read all packages from persistant file.\n");
+                        // Send all packages to the client
+                        memset(buff, '\0', MAX_PACKAGE_LEN);
+                        read_buff_total_len = read_from_file(persistent_file, buff);
+
+                        if (read_buff_total_len != -1) {
+                            while(send_buff_total_len < read_buff_total_len) { 
+                                //printf("Sending all packages to client fd %d.\n", connfd);
+                                send_buff_current_len = send(connfd, buff, read_buff_total_len, MSG_DONTWAIT);
+                                if (send_buff_current_len == -1 && errno == EAGAIN) {
+                                    continue;
+                                }
+                                send_buff_total_len += send_buff_current_len; 
+                            }
+                            //printf("%ld bytes sent.\n", send_buff_total_len); 
+                        } else {
+                            printf("Failed to read all packages from persistant file.\n");
+                            *retval = 1;
+                            break; // goto thread_exit
+                        }
                     }
+                    pthread_mutex_unlock(&mutex);
+                } else {
+                    printf("Failed to parse package: Missing package termination \\n from client fd %d.\n", connfd); 
                 }
-            } else {
-                printf("Missing package termination (\n) from client fd %d.\n", connfd); 
             }
         }
     }
 
-    free(read_buff);
+    args->completed = true;
+
+    free(buff);
+
+    shutdown(connfd, SHUT_RDWR);
+    close(connfd);
+
+    pthread_mutex_lock(&mutex);
+    if (thd_exit_requested) *retval = 2; // Parent caught signal exit
+    pthread_mutex_unlock(&mutex);
+
+    printf("Thread with socket fd=%d exit rc=%d.\n", connfd, *retval); 
+    pthread_exit((void*)retval);
 } 
+
+void * log_current_time(void *_args) {
+    /**
+     * Function designed to log the current system time to persistent file 
+     * @param _args Paramter list
+     * @return Void pointer holding the return value
+     */
+
+    struct thread_data *args = (struct thread_data *)_args;
+    struct tm *tmp;
+    char timestamp[50];
+    time_t rawtime;
+    struct timespec tspec = { .tv_sec=10, .tv_nsec=0 }; // Sleep for 10 secs
+    int *retval = (int *)malloc(sizeof (int));
+    *retval = 0;
+
+    while (!thd_exit_requested) {
+        if ((clock_nanosleep(CLOCK_MONOTONIC, 0, &tspec, NULL)) == 0) {
+            rawtime = time(NULL);
+            tmp = localtime(&rawtime);
+            if (tmp == NULL) {
+                printf("Failed to get local time.\n"); 
+                * retval = 1;
+                break; // goto thread_exit
+            }
+            if ((strftime(timestamp, sizeof (timestamp), "timestamp:%Y-%m-%d %H:%M:%S\n", tmp) != 0)) {
+                //printf("Logging timestamp: %s", timestamp); 
+                pthread_mutex_lock(&mutex);
+                if (write_to_file(persistent_file, timestamp) == -1) {
+                    printf("Failed to log timestamp into persistant file.\n");
+                    *retval = 1;
+                    break; // goto thread_exit
+                } 
+                pthread_mutex_unlock(&mutex);
+            } else {
+                // 0 Bbytes written
+                printf("Failed to get timestamp into buffer.\n"); 
+                *retval = 1;
+                break; // goto thread_exit
+            }
+        }
+    }
+
+    args->completed = true;
+
+    pthread_mutex_lock(&mutex);
+    if (thd_exit_requested) *retval = 2; // Parent caught signal exit
+    pthread_mutex_unlock(&mutex);
+    //printf("Thread for time logging exit rc=%d.\n", *retval); 
+
+    pthread_exit((void*)retval);
+}

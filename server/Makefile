@@ -1,12 +1,14 @@
-C_COMPILER=$(CC)
+C_COMPILER=$(CROSS_COMPILE)$(CC)
 
-ifeq ($(MANUAL_BUILD), 1)
-	C_COMPILER=$(CROSS_COMPILE)gcc
-	ifeq ($(shell uname -s), DontUseClang)
-		C_COMPILER=clang
-	endif
-	CFLAGS += -Wall
-	CFLAGS += -Wextra
+ifeq ($(shell uname -s), DontUseClang)
+	C_COMPILER=clang
+endif
+
+CFLAGS += -Wall
+CFLAGS += -Wextra
+CFLAGS += -Werror
+ifeq ($(DEBUG), 1)
+	CFLAGS += -g
 endif
 
 ROOT_DIR=.
