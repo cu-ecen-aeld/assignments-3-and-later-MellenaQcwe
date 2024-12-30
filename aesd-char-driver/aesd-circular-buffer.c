@@ -14,6 +14,8 @@
 #include <string.h>
 #endif
 
+#include <stdio.h>
+
 #include "aesd-circular-buffer.h"
 
 /**
@@ -29,9 +31,18 @@
 struct aesd_buffer_entry *aesd_circular_buffer_find_entry_offset_for_fpos(struct aesd_circular_buffer *buffer,
             size_t char_offset, size_t *entry_offset_byte_rtn )
 {
-    /**
-    * TODO: implement per description
-    */
+    int buff_index/*0,..,9*/, cmd_n = buffer->out_offs/*0,..,n,n+1,n+out_offs,...*/;
+    for (; cmd_n < (AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED + buffer->out_offs); ++cmd_n) {
+        buff_index = cmd_n % AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED;
+        if (buffer->entry[buff_index].size > char_offset) {
+            *entry_offset_byte_rtn = char_offset;
+            printf("READ cmd nr %d (buffer index %d): %s", cmd_n, buff_index, buffer->entry[buff_index].buffptr + char_offset);
+            return &(buffer->entry[buff_index]);
+        } else {
+            char_offset -= buffer->entry[buff_index].size;
+        } 
+    }
+
     return NULL;
 }
 
@@ -44,9 +55,25 @@ struct aesd_buffer_entry *aesd_circular_buffer_find_entry_offset_for_fpos(struct
 */
 void aesd_circular_buffer_add_entry(struct aesd_circular_buffer *buffer, const struct aesd_buffer_entry *add_entry)
 {
-    /**
-    * TODO: implement per description
-    */
+    if (buffer->full) {
+        buffer->full = false;
+
+        // Override oldest entry
+        buffer->in_offs = buffer->out_offs;
+        buffer->out_offs = (buffer->out_offs + 1) % AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED; // Advance out pos
+    }
+
+    if (((buffer->in_offs + 1) % AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED) == buffer->out_offs) {
+        // Circular buffer is full
+        buffer->full = true;
+    }
+
+    // Add new entry
+    buffer->entry[buffer->in_offs].buffptr = add_entry->buffptr; 
+    buffer->entry[buffer->in_offs].size = add_entry->size;
+    printf("WRITTEN cmd %d: %s",  buffer->in_offs, buffer->entry[buffer->in_offs].buffptr);
+    buffer->in_offs = (buffer->in_offs + 1) % AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED; // Advance in pos
+    
 }
 
 /**
