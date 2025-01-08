@@ -29,7 +29,7 @@ MODULE_DESCRIPTION("AESD character device driver");
 struct aesd_dev aesd_device;
 struct aesd_circular_buffer cbuf; // Circular  buffer
 struct aesd_buffer_entry *cmd; // NULL initialzed
-struct aesd_buffer_entry *cmds[AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED] = {}; // Free at teardown
+struct aesd_buffer_entry *cmds[AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED]; // Track allocated memory to free at teardown
 int cmds_cnt;
 
 int aesd_open(struct inode *inode, struct file *filp)
@@ -106,6 +106,9 @@ ssize_t aesd_read(struct file *filp, char __user *buf, size_t count,
 
 out:
     mutex_unlock(&aesd_device.lock);
+    if (byte_rtn) {
+        kfree(byte_rtn);
+    }
     return retval;
 }
 
@@ -136,7 +139,10 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
             return retval;
         }
 
-        //cmds[cmds_cnt++] = cmd;
+        cmds[cmds_cnt++] = cmd;
+        if (cmds_cnt == AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED) {
+            cmds_cnt = 0;
+        }
     }
 
     if (mutex_lock_interruptible(&aesd_device.lock))
@@ -154,11 +160,17 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
     if (*(cmd->buffptr + (cmd_offset-1)) == '\n') {
         *(tmp_cmd + cmd_offset) = '\0';
         cmd->size = cmd_offset;
+        cmd_offset = 0;
+       
+        // if (cbuf.entry[cbuf.in_offs].buffptr != NULL) {
+        //     // Free old memory before writing new value
+        //     kfree(cbuf.entry[cbuf.in_offs].buffptr);
+        // }
+
         aesd_circular_buffer_add_entry(&cbuf, cmd);
         // if (aesd_device.cbuf->in_offs) {
         //     PDEBUG("Cmd (size = %ld) at %d is %s", cmd->size, (aesd_device.cbuf->in_offs-1), aesd_device.cbuf->entry[(aesd_device.cbuf->in_offs-1)].buffptr);
         // }
-        cmd_offset = 0;
     } 
 
     retval = count;
@@ -218,13 +230,17 @@ void aesd_cleanup_module(void)
 
     cdev_del(&aesd_device.cdev);
 
-    // for (;;) {  
-    //     kfree(cmds[cmds_cnt]->buffptr);
-    //     kfree(cmds[cmds_cnt]);
-    //     if (!cmds_cnt--) break;
-    // }
-    kfree(cmd->buffptr);
-    kfree(cmds);
+    cmds_cnt = 0;
+    for (; cmds_cnt < AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED; ++cmds_cnt) {  
+        if (cmds[cmds_cnt] != NULL) {
+            if (cmds[cmds_cnt]->buffptr != NULL) {
+                kfree(cmds[cmds_cnt]->buffptr);
+            }
+            kfree(cmds[cmds_cnt]);
+        }
+    }
+    // kfree(cmd->buffptr);
+    // kfree(cmds);
 
     unregister_chrdev_region(devno, 1);
 }

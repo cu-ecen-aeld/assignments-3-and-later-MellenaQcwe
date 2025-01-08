@@ -62,7 +62,7 @@ void aesd_circular_buffer_add_entry(struct aesd_circular_buffer *buffer, const s
 
         // Override oldest entry
         buffer->in_offs = buffer->out_offs;
-        buffer->out_offs = (buffer->out_offs + 1) % AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED; // Advance out pos
+        buffer->out_offs = (buffer->out_offs + 1) % AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED; // Advance out-offset pos
     }
 
     if (((buffer->in_offs + 1) % AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED) == buffer->out_offs) {
@@ -76,7 +76,7 @@ void aesd_circular_buffer_add_entry(struct aesd_circular_buffer *buffer, const s
     #ifdef __KERNEL__
     printk(KERN_DEBUG "Circular buffer: Added command[%d]: %s",  buffer->in_offs, buffer->entry[buffer->in_offs].buffptr);
     #endif
-    buffer->in_offs = (buffer->in_offs + 1) % AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED; // Advance in pos
+    buffer->in_offs = (buffer->in_offs + 1) % AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED; // Advance in-offset pos
     
 }
 
