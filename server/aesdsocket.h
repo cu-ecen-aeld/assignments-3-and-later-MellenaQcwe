@@ -25,7 +25,8 @@
 #include <sys/queue.h>
 
 
-#define MAX_PACKAGE_LEN 1024*4  // 4 Kbytes maximal length of byte received on socket
+#define MAX_PACKAGE_LEN 1024
+#define MAX_PACKAGE_LEN_KB 4*MAX_PACKAGE_LEN  // 4 Kbytes maximal length of byte received on socket
 #define PORT "9000" // Socket port to bind to
 #define MAX_THREADS 100 // Maximal allowed threads
 
@@ -57,7 +58,7 @@ struct slist_data_s {
 
 static void* msg_exchange(void *);
 static int write_to_file(const char*, const char*);
-static ssize_t read_from_file(const char*, char*);
+static ssize_t read_from_file(const char*, char*, size_t);
 static void print_usage (const char*);
 static void parse_cmdline_args(int, char *[]);
 // static void* log_current_time(void *);

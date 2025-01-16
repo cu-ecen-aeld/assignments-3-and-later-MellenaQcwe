@@ -88,9 +88,10 @@ int main(int argc, char *argv[]) {
     }
 
     // Increase sock buffer size to prevent recv routine to block waiting for more incoming data
+    #ifndef USE_AESD_CHAR_DEVICE
     char desirable_buff_size_str[50] = {};
-    int desirable_buff_size = MAX_PACKAGE_LEN*50; // cat /proc/sys/net/core/rmem_max retunrs 212992 and 4096*50 is 204800
-    if ((read_from_file("/proc/sys/net/core/rmem_max", desirable_buff_size_str)) > 0) {
+    int desirable_buff_size = MAX_PACKAGE_LEN_KB*50; // cat /proc/sys/net/core/rmem_max retunrs 212992 and 4096*50 is 204800
+    if ((read_from_file("/proc/sys/net/core/rmem_max", desirable_buff_size_str, 0)) > 0) {
         desirable_buff_size = atoi(desirable_buff_size_str);
     }
     printf("Socket desirable data size is %d.\n", desirable_buff_size); 
@@ -98,6 +99,7 @@ int main(int argc, char *argv[]) {
         printf("Failed to set socket option SO_RCVBUF.\n"); 
         exit(-1); 
     }
+    #endif
   
     // Binding newly created socket to given IP and verification
     if ((bind(sockfd, (struct sockaddr *)result->ai_addr, result->ai_addrlen)) != 0) { 
@@ -241,7 +243,11 @@ static int write_to_file(const char* user_file, const char* str) {
     int sz = -1;
     
     // Append to already created file
+    #ifndef USE_AESD_CHAR_DEVICE
     fptr = open(user_file, O_WRONLY | O_APPEND | O_CREAT, 0600);
+    #else 
+    fptr = open(user_file, O_RDWR);
+    #endif
 
     if (fptr == -1) {
         printf("Failed to open %s.\n", user_file);
@@ -249,12 +255,15 @@ static int write_to_file(const char* user_file, const char* str) {
     }
 
     // Write the buffer to the file
+    // printf("Write to %s.\n", user_file);
     sz = write(fptr, str, strlen(str));
     //printf("Wrote '%d' bytes to file '%s'.\n", sz, user_file);
     if (sz == -1) {
         printf("Failed to write to file.\n");
+        close(fptr);
         return -1;
     }
+    printf("Written %d bytes.\n", sz);
 
     // Close the file
     if (close(fptr) < 0) {
@@ -265,7 +274,7 @@ static int write_to_file(const char* user_file, const char* str) {
     return sz;
 }
 
-static ssize_t read_from_file(const char* user_file, char* read_buff) {
+static ssize_t read_from_file(const char* user_file, char* read_buff, size_t buff_len) {
 
     /**
      * Read file content
@@ -274,36 +283,61 @@ static ssize_t read_from_file(const char* user_file, char* read_buff) {
      * @return  Return the number of bytes read, or -1 if an error occure
      */
 
-    FILE *fptr = NULL;
-    size_t sz = -1;
-    long int file_sz = -1;
+    size_t sz = 0;
     
-    // Open read only
+    #ifndef USE_AESD_CHAR_DEVICE
+    FILE *fptr = NULL;
     fptr = fopen(user_file, "r");
     if (fptr == NULL) {
         printf("Failed to open %s.\n", user_file);
         return -1;
     }
 
-    // Read file content
+    long int file_sz = -1;
     fseek(fptr, 0, SEEK_END); // Move file position to the end of the file
     file_sz = ftell(fptr); // Get the current file position
     fseek(fptr, 0, SEEK_SET); // Reset file position to start of file
     sz = fread(read_buff, 1, file_sz, fptr);
     if (sz <= 0) {
         printf("Failed read from file %s.\n", user_file);
+        close(fptr);
         return -1;
     }
+
     if ((long int)sz != file_sz) {
         printf("Warning: read %ld bytes != %ld file size.\n", sz, file_sz);
     }
+
     //printf("Read '%ld' bytes from file '%s'.\n", sz, user_file);
 
-    // Close the file
     if (fclose(fptr) < 0) {
         printf("Failed to close %s.\n", user_file);
         return -1;
     }
+    #else 
+    int fptr = -1;
+    //printf("Read from %s.\n", user_file);
+    fptr = open(user_file, O_RDONLY);
+    if (fptr == -1) {
+        printf("Failed to open %s.\n", user_file);
+        return -1;
+    }
+    size_t read_offset = 0;
+    while ((read_offset = read(fptr, read_buff + sz*(sizeof(char)), MAX_PACKAGE_LEN))) {
+        if (read_offset == -1) {
+            printf("Failed read from file %s.\n", user_file);
+            close(fptr);
+            return -1;
+        }
+        sz += read_offset;
+    }
+    printf("Read %s", read_buff);
+
+    if (close(fptr) < 0) {
+        printf("Failed to close %s.\n", user_file);
+        return -1;
+    }
+    #endif
 
     return sz;
 }
@@ -322,15 +356,15 @@ static void* msg_exchange(void *_args) {
     int *retval = (int *)malloc(sizeof (int));
     *retval = 0;
 
-    char *buff = (char*)malloc(MAX_PACKAGE_LEN); // Allocate buffer for new thread
+    char *buff = (char*)malloc(MAX_PACKAGE_LEN_KB); // Allocate buffer for new thread
     ssize_t read_buff_total_len = 0;
     ssize_t send_buff_current_len = 0;
     ssize_t send_buff_total_len = 0;
 
     while (!thd_exit_requested) {
         // Read the message from client non blocking and copy it in buffer 
-        memset(buff, '\0', MAX_PACKAGE_LEN);
-        read_buff_total_len = recv(connfd, buff, MAX_PACKAGE_LEN, MSG_DONTWAIT /*none blocking io*/); 
+        memset(buff, '\0', MAX_PACKAGE_LEN_KB);
+        read_buff_total_len = recv(connfd, buff, MAX_PACKAGE_LEN_KB, MSG_DONTWAIT /*none blocking io*/); 
         if (read_buff_total_len == -1 && errno == EAGAIN) {
             //printf("Waiting for incoming data from client fd %d.\n", connfd); 
             continue;
@@ -338,8 +372,8 @@ static void* msg_exchange(void *_args) {
             printf("Closed connection from %s (fd=%d).\n", clientip, connfd); 
             syslog(LOG_NOTICE, "Closed connection from %s (fd=%d).\n", clientip, connfd); 
             break; // goto thread_exit
-        } else if (read_buff_total_len > MAX_PACKAGE_LEN) {
-            printf("Failed with packet length exeeding %d bytes: Discarded ((client fd %d)).\n", (int)MAX_PACKAGE_LEN, connfd); 
+        } else if (read_buff_total_len > MAX_PACKAGE_LEN_KB) {
+            printf("Failed with packet length exeeding %d bytes: Discarded ((client fd %d)).\n", (int)MAX_PACKAGE_LEN_KB, connfd); 
             *retval = 1;
             break; // goto thread_exit
         } else {
@@ -356,8 +390,8 @@ static void* msg_exchange(void *_args) {
                         break; // goto thread_exit
                     } else {
                         // Send all packages to the client
-                        memset(buff, '\0', MAX_PACKAGE_LEN);
-                        read_buff_total_len = read_from_file(persistent_file, buff);
+                        memset(buff, '\0', MAX_PACKAGE_LEN_KB);
+                        read_buff_total_len = read_from_file(persistent_file, buff, read_buff_total_len);
 
                         if (read_buff_total_len != -1) {
                             while(send_buff_total_len < read_buff_total_len) { 

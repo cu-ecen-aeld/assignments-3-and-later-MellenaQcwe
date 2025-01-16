@@ -168,8 +168,8 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
         // }
 
         aesd_circular_buffer_add_entry(&cbuf, cmd);
-        // if (aesd_device.cbuf->in_offs) {
-        //     PDEBUG("Cmd (size = %ld) at %d is %s", cmd->size, (aesd_device.cbuf->in_offs-1), aesd_device.cbuf->entry[(aesd_device.cbuf->in_offs-1)].buffptr);
+        // if (cbuf.in_offs) {
+        //     PDEBUG("Cmd (size = %ld) at %d is %s", cmd->size, (cbuf.in_offs-1), cbuf.entry[(cbuf.in_offs-1)].buffptr);
         // }
     } 
 
