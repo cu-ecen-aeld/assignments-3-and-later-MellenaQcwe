@@ -36,9 +36,9 @@ struct aesd_buffer_entry *aesd_circular_buffer_find_entry_offset_for_fpos(struct
         buff_index = cmd_n % AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED;
         if (buffer->entry[buff_index].size > char_offset) {
             *entry_offset_byte_rtn = char_offset;
-            #ifdef __KERNEL__
-            printk(KERN_DEBUG "Circular buffer: Read command %d at index %d: %s", cmd_n, buff_index, buffer->entry[buff_index].buffptr + char_offset);
-            #endif
+            // #ifdef __KERNEL__
+            // printk(KERN_DEBUG "Circular buffer: Read command %d at index %d: %s", cmd_n, buff_index, buffer->entry[buff_index].buffptr + char_offset);
+            // #endif
             return &(buffer->entry[buff_index]);
         } else {
             char_offset -= buffer->entry[buff_index].size;
@@ -73,9 +73,9 @@ void aesd_circular_buffer_add_entry(struct aesd_circular_buffer *buffer, const s
     // Add new entry
     buffer->entry[buffer->in_offs].buffptr = add_entry->buffptr;
     buffer->entry[buffer->in_offs].size = add_entry->size;
-    #ifdef __KERNEL__
-    printk(KERN_DEBUG "Circular buffer: Added command[%d]: %s",  buffer->in_offs, buffer->entry[buffer->in_offs].buffptr);
-    #endif
+    // #ifdef __KERNEL__
+    // printk(KERN_DEBUG "Circular buffer: Added command[%d]: %s",  buffer->in_offs, buffer->entry[buffer->in_offs].buffptr);
+    // #endif
     buffer->in_offs = (buffer->in_offs + 1) % AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED; // Advance in-offset pos
     
 }

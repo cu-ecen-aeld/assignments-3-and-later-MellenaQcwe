@@ -239,8 +239,6 @@ void aesd_cleanup_module(void)
             kfree(cmds[cmds_cnt]);
         }
     }
-    // kfree(cmd->buffptr);
-    // kfree(cmds);
 
     unregister_chrdev_region(devno, 1);
 }

@@ -31,7 +31,11 @@
 
 static struct addrinfo *result = NULL; // Socket address info
 static int sockfd = -1; // Server socket to listen for connection
+#ifndef USE_AESD_CHAR_DEVICE
 static char persistent_file[] = "/var/tmp/aesdsocketdata"; // Persistent file
+#else
+static char persistent_file[] = "/dev/aesdchar"; // Persistent file
+#endif
 static int daemon_flag = 0; // Don't run in daemon mode (default)
 static int help_flag = 0; // Enable commandline help output
 
@@ -56,6 +60,6 @@ static int write_to_file(const char*, const char*);
 static ssize_t read_from_file(const char*, char*);
 static void print_usage (const char*);
 static void parse_cmdline_args(int, char *[]);
-static void* log_current_time(void *);
+// static void* log_current_time(void *);
 
 #endif // AESD_SOCKET

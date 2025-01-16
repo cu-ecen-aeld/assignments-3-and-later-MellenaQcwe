@@ -7,7 +7,9 @@ void signal_handle(int signal_number) {
     if (signal_number == SIGINT || signal_number == SIGTERM) {
         syslog(LOG_NOTICE, "Caught signal, exiting.");
 
+        #ifndef USE_AESD_CHAR_DEVICE
         remove(persistent_file);
+        #endif
 
         shutdown(sockfd, SHUT_RDWR);
         close(sockfd);
@@ -125,6 +127,7 @@ int main(int argc, char *argv[]) {
     // Init threads list
     SLIST_INIT(&head);
 
+    #ifndef USE_AESD_CHAR_DEVICE
     // Start timestamp thread
     thd = malloc(sizeof(slist_data_t));
     thd->data.connfd = -1; // No socket
@@ -133,6 +136,7 @@ int main(int argc, char *argv[]) {
     pthread_create(&(thd->data.id), NULL, log_current_time, (void *)&thd->data);
     SLIST_INSERT_HEAD(&head, thd, entries);
     printf("Created thread %lu for time logging.\n", thd->data.id); 
+    #endif 
 
 
     // Accept socket connections forever
@@ -394,6 +398,7 @@ static void* msg_exchange(void *_args) {
     pthread_exit((void*)retval);
 } 
 
+#ifndef USE_AESD_CHAR_DEVICE
 void * log_current_time(void *_args) {
     /**
      * Function designed to log the current system time to persistent file 
@@ -445,3 +450,4 @@ void * log_current_time(void *_args) {
 
     pthread_exit((void*)retval);
 }
+#endif
